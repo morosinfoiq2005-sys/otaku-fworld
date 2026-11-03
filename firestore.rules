@@ -1,0 +1,47 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Admins are listed in the "admins" collection (created manually in the
+    // Firebase console). Clients can never write to it.
+    function isAdmin() {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    match /admins/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+
+      // A new user can only create their own profile with safe starting values.
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.role == 'user'
+        && request.resource.data.points == 0
+        && request.resource.data.level == 1
+        && request.resource.data.keys().hasOnly(
+             ['displayName', 'email', 'createdAt', 'points', 'level', 'role']);
+
+      // Users may change ONLY their display name (never points, level or role).
+      allow update: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['displayName']);
+
+      allow delete: if false;
+    }
+
+    // Everything else is closed until a later phase opens it deliberately.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

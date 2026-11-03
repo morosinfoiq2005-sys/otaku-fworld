@@ -1,0 +1,64 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Unpack project
+        run: unzip -q otaku_world.zip
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create Android platform files
+        working-directory: otaku_world
+        run: |
+          flutter create --platforms=android --org com.otakuworld --project-name otaku_world .
+          sed -i 's/android:label="[^"]*"/android:label="OTAKU WORLD"/' android/app/src/main/AndroidManifest.xml
+          for f in android/app/build.gradle.kts android/app/build.gradle; do
+            if [ -f "$f" ]; then
+              sed -i 's/minSdk = flutter.minSdkVersion/minSdk = maxOf(flutter.minSdkVersion, 23)/; s/minSdkVersion flutter.minSdkVersion/minSdkVersion Math.max(flutter.minSdkVersion, 23)/' "$f"
+            fi
+          done
+
+      - name: Configure Firebase (optional)
+        working-directory: otaku_world
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > google-services.json
+            python3 tools/gen_firebase_options.py google-services.json lib/core/firebase/firebase_options.dart
+            rm google-services.json
+          else
+            echo "No GOOGLE_SERVICES_JSON secret found: building WITHOUT Firebase."
+          fi
+
+      - name: Get packages
+        working-directory: otaku_world
+        run: flutter pub get
+
+      - name: Build release APK
+        working-directory: otaku_world
+        run: flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: otaku-world-apk
+          path: otaku_world/build/app/outputs/flutter-apk/app-release.apk
